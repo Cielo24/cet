@@ -1,0 +1,14 @@
+{application, cet,
+ [{description, "Cielo24 Erlang Tools"},
+  {vsn, "0.1.0"},
+  {registered, []},
+  %% {mod, {jet_app, []}},
+  {applications,
+   [kernel,
+    stdlib]},
+  {env,[]},
+  {modules, []},
+  {maintainers, ["Juan Jose Comellas"]},
+  {licenses, []},
+  {links, [{"GitHub", "https://github.com/Cielo24/cet"}]}
+ ]}.
