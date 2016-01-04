@@ -10,12 +10,9 @@
 -type table_name() :: atom().
 -type table_info() :: {access_mode, read_write | read_only}
                     | {attributes, [atom()]}
-                    | {disc_copies, [node()]}
-                    | {disc_only_copies, [node()]}
                     | {index, [integer()]}
                     | {load_order, [integer()]}
                     | {majority, boolean()}
-                    | {ram_copies, [node()]}
                     | {record, atom()}
                     | {snmp, term()}
                     | {storage_properties, term()}
@@ -40,10 +37,18 @@ init(Tables) ->
 -spec init([table_spec()], [node()]) -> ok | no_return().
 init(Tables, Nodes) ->
     lager:info("Initializing mnesia database in ~s", [mnesia_dir()]),
+    StorageType =
+        case Nodes of
+            %% There's no need to create an on-disk schema for Mnesia when there
+            %% isn't a valid node name. This normally happens when running tests
+            %% with common_test.
+            [nonode@nohost] -> ram_copies;
+            _               -> disc_copies
+        end,
     ok = ensure_mnesia_started(Nodes),
     ok = ensure_mnesia_dir(),
-    ok = ensure_schema_created(Nodes),
-    ok = ensure_tables_created(Tables).
+    ok = ensure_schema_created(Nodes, StorageType),
+    ok = ensure_tables_created(Tables, Nodes, StorageType).
 
 
 %%%===================================================================
@@ -62,7 +67,7 @@ ensure_mnesia_started(Nodes) ->
             timer:sleep(500),
             ensure_mnesia_started(Nodes);
         stopping ->
-            {error, mnesia_is_stopping}
+            {error, mnesia_stopping}
     end.
 
 -spec start_mnesia([node()]) -> ok | {error, any()}.
@@ -82,10 +87,10 @@ ensure_mnesia_dir() ->
             ok
     end.
 
--spec ensure_schema_created([node()] | node()) -> ok | {error, any()}.
-ensure_schema_created(Nodes) when is_list(Nodes) ->
-    lists:foreach(fun(Node) -> ok = ensure_schema_created(Node) end, Nodes);
-ensure_schema_created(Node) ->
+-spec ensure_schema_created([node()] | node(), ram_copies | disc_copies) -> ok | {error, any()}.
+ensure_schema_created(Nodes, StorageType) when is_list(Nodes) ->
+    lists:foreach(fun(Node) -> ok = ensure_schema_created(Node, StorageType) end, Nodes);
+ensure_schema_created(Node, StorageType) ->
     %% This is a "hackish" way of making sure that a Mnesia schema exists on
     %% disk without shutting down Mnesia.
     %% When Mnesia is started without having called mnesia:create_schema/1 in
@@ -94,23 +99,32 @@ ensure_schema_created(Node) ->
     %% mnesia:create_schema/1 will fail if called while Mnesia is up.
     %% To solve this problem, we use mnesia:change_table_copy_type/3 to make
     %% the default 'schema' disk-based.
-    case mnesia:change_table_copy_type(schema, Node, disc_copies) of
-        {atomic, ok} ->
-            lager:info("Created Mnesia schema in node '~s'", [Node]),
+    case mnesia:table_info(schema, storage_type) of
+        StorageType ->
+            lager:info("Mnesia schema is already stored as '~s'~n; no need to modify it", [StorageType]),
             ok;
-        {aborted, {already_exists, schema, Node, disc_copies}} ->
-            ok;
-        Error ->
-            Error
+        _ ->
+            case mnesia:change_table_copy_type(schema, Node, StorageType) of
+                {atomic, ok} ->
+                    lager:info("Created Mnesia schema in node '~s'~n", [Node]),
+                    ok;
+                {aborted, {already_exists, schema, Node, StorageType}} ->
+                    ok;
+                {aborted, Reason} ->
+                    lager:error("Failed to create Mnesia schema in node '~s': ~p~n", [Node, Reason]),
+                    {error, Reason}
+            end
     end.
 
--spec ensure_tables_created([table_spec()]) -> ok.
-ensure_tables_created(Tables) ->
-    lists:foreach(fun(Table) -> ok = ensure_table_created(Table) end, Tables),
+-spec ensure_tables_created([table_spec()], [node()], disc_copies | ram_copies) -> ok.
+ensure_tables_created(Tables, Nodes, StorageType) ->
+    lists:foreach(fun(Table) -> ok = ensure_table_created(Table, Nodes, StorageType) end, Tables),
     ok.
 
--spec ensure_table_created(table_spec()) -> ok | {error, Reason :: term()}.
-ensure_table_created({Name, Info} = _Table) when is_atom(Name), is_list(Info) ->
+-spec ensure_table_created(table_spec(), [node()], disc_copies | ram_copies) ->
+                                  ok | {error, Reason :: term()}.
+ensure_table_created({Name, Info} = _Table, Nodes, StorageType)
+  when is_atom(Name), is_list(Info), is_list(Nodes) ->
     Attrs = proplists:get_value(attributes, Info),
     %% Make sure that the schema of the Mnesia table is up-to-date.
     try (length(Attrs) + 1 =:= mnesia:table_info(Name, arity) andalso
@@ -122,14 +136,17 @@ ensure_table_created({Name, Info} = _Table) when is_atom(Name), is_list(Info) ->
                      Attrs, mnesia:table_info(Name, attributes)}}
     catch
         exit:{aborted, {no_exists, Name, _}} ->
-            create_table(Name, Info)
+            create_table(Name, Info, Nodes, StorageType)
     end.
 
--spec create_table(table_name(), [table_info()]) -> ok | {error, Reason :: term()}.
-create_table(Name, Info) ->
-    lager:info("Creating table '~s'", [Name]),
+-spec create_table(table_name(), [table_info()], [node()], disc_copies | ram_copies) ->
+                          ok | {error, Reason :: term()}.
+create_table(Name, Info0, Nodes, StorageType) ->
+    lager:info("Creating table '~s' with storage type '~s' on nodes ~p",
+               [Name, StorageType, Nodes]),
+    Info = lists:keystore(StorageType, 1, Info0, {StorageType, Nodes}),
     case mnesia:create_table(Name, Info) of
-        {atomic, ok} -> ok;
+        {atomic, ok}      -> ok;
         {aborted, Reason} -> {error, Reason}
     end.
 
