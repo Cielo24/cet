@@ -9,7 +9,7 @@
 
 -compile([{parse_transform, lager_transform}]).
 
--export([common_http_log/4]).
+-export([common_log/4]).
 -export([get_body/1, get_body/2]).
 -export([get_body_strict/2]).
 -export([get_part_body/1, get_part_body/2]).
@@ -35,8 +35,8 @@
                                 | {compress, boolean()}.
 
 
--spec common_http_log(cowboy:status(), cowboy:headers(), iodata(), req()) -> req().
-common_http_log(Status, _Headers, Body, Req0) ->
+-spec common_log(cowboy:status(), cowboy:headers(), iodata(), req()) -> req().
+common_log(Status, _Headers, Body, Req0) ->
     %% 127.0.0.1 - - [10/Oct/2000:13:55:36 -0700] "GET /apache_pb.gif HTTP/1.0" 200 2326
     [Method, Version, Path, Qs0] = cowboy_req:get([method, version, path, qs], Req0),
     {Addr, Req1} = case cowboy_req:peer(Req0) of
