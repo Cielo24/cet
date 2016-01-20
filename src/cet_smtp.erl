@@ -9,20 +9,22 @@
 
 -compile([{parse_transform, lager_transform}]).
 
--export([send_email/1, send_email/2]).
--export([smtp_options/2, smtp_option_value/2, smtp_option_value/3]).
+-export([send_email/2]).
+-export([smtp_options/2]).
 -export([rfc5322_timestamp/1, pretty_timestamp/1, pretty_timestamp/2]).
 
 -export_type([email/0]).
+-export_type([option/0]).
+-export_type([env_option/0]).
 
 -define(APP,                              cet).
 
 -define(AUTH,                             if_available).
--define(ENABLE_SSL,                       false).
 -define(PORT,                             25).
 -define(RELAY,                            "localhost").
--define(SENDER,                           "no-reply@cielo24.com").
 -define(RETRIES,                          2).
+-define(SENDER,                           "no-reply@cielo24.com").
+-define(SSL,                              false).
 -define(TLS,                              if_available).
 
 -define(HDR_BCC,                          "Bcc").
@@ -71,16 +73,39 @@
                              | {html, binary()}
                              | {attachments, [attachment()]}.
 -type email()               :: [email_item()].
+-type option()              :: {application, module()}
+                             | {relay, string()}
+                             | {port, inet:port_number()}
+                             | {hostname, inet:hostname()}
+                             | {ssl, boolean() | if_available}
+                             | {tls, boolean() | if_available}
+                             | {auth, boolean() | if_available}
+                             | {username, binary()}
+                             | {password, binary()}
+                             | {sender, address()}
+                             | {retries, non_neg_integer()}.
+-type env_option()          :: {smtp_relay, string()}
+                             | {smtp_port, inet:port_number()}
+                             | {smtp_hostname, inet:hostname()}
+                             | {smtp_ssl, boolean() | if_available}
+                             | {smtp_tls, boolean() | if_available}
+                             | {smtp_auth, boolean() | if_available}
+                             | {smtp_username, binary()}
+                             | {smtp_password, binary()}
+                             | {smtp_sender, address()}
+                             | {smtp_retries, non_neg_integer()}.
 
 
--spec send_email(email()) -> ok | {error, Reason :: term()}.
-send_email(Email) ->
-    send_email(Email, []).
-
--spec send_email(email(), Options :: proplists:proplist()) -> ok | {error, Reason :: term()}.
-send_email(Email, Opts) ->
-    Options = smtp_options(Opts),
-    Sender = smtp_option_value(smtp_sender, Options, ?SENDER),
+-spec send_email(email(), [option()]) -> ok | {error, Reason :: term()}.
+send_email(Email, Options0) ->
+    %% Determine which application's environment to use to set the configuration
+    %% options (by default we use 'cet').
+    App = proplists:get_value(application, Options0, ?APP),
+    %% Build the options for gen_smtp taking whatever was not passed as an
+    %% argument in Options0 from the application's environment.
+    Options1 = smtp_options(App, Options0),
+    %% The sender is not part of the options passed to gen_smtp.
+    {value, {sender, Sender}, Options} = lists:keytake(sender, 1, Options1),
     Destinations = email_destinations(Email),
     Body = email_body(Email),
     lager:debug("Sending email from ~p to ~p with options: ~p~n",
@@ -107,38 +132,39 @@ send_email(Email, Opts) ->
 %% smtp_options() ->
 %%     smtp_options([]).
 
-smtp_options(Options) ->
-    smtp_options([{smtp_relay,      relay,     ?RELAY},
-                  {smtp_port,       port,      ?PORT},
-                  {smtp_hostname,   hostname},
-                  {enable_smtp_ssl, ssl,       ?ENABLE_SSL},
-                  {smtp_tls,        tls,       ?TLS},
-                  {smtp_auth,       auth,      ?AUTH},
-                  {smtp_username,   username},
-                  {smtp_password,   password},
-                  {smtp_retries,    retries,   ?RETRIES}], Options).
+smtp_options(App, Options) ->
+    smtp_options(App, [{smtp_relay,    relay,     ?RELAY},
+                       {smtp_port,     port,      ?PORT},
+                       {smtp_hostname, hostname},
+                       {smtp_ssl,      ssl,       ?SSL},
+                       {smtp_tls,      tls,       ?TLS},
+                       {smtp_auth,     auth,      ?AUTH},
+                       {smtp_username, username},
+                       {smtp_password, password},
+                       {smtp_sender,   sender,    ?SENDER},
+                       {smtp_retries,  retries,   ?RETRIES}], Options).
 
-smtp_options(ConfigKeys, Options) ->
-    smtp_options(ConfigKeys, Options, []).
+smtp_options(App, Keys, Options) ->
+    smtp_options(App, Keys, Options, []).
 
-smtp_options([{ConfigKey, SmtpKey, Default} | Tail], Options, Acc) ->
-    NewAcc = [{SmtpKey, smtp_option_value(ConfigKey, Options, Default)} | Acc],
-    smtp_options(Tail, Options, NewAcc);
-smtp_options([{ConfigKey, SmtpKey} | Tail], Options, Acc) ->
-    NewAcc = case smtp_option_value(ConfigKey, Options) of
+smtp_options(App, [{EnvKey, SmtpKey, Default} | Tail], Options, Acc) ->
+    NewAcc = [{SmtpKey, smtp_option_value(App, EnvKey, SmtpKey, Options, Default)} | Acc],
+    smtp_options(App, Tail, Options, NewAcc);
+smtp_options(App, [{EnvKey, SmtpKey} | Tail], Options, Acc) ->
+    NewAcc = case smtp_option_value(App, EnvKey, SmtpKey, Options) of
                  undefined -> Acc;
                  Value     -> [{SmtpKey, Value} | Acc]
              end,
-    smtp_options(Tail, Options, NewAcc);
-smtp_options([], _Options, Acc) ->
+    smtp_options(App, Tail, Options, NewAcc);
+smtp_options(_App, [], _Options, Acc) ->
     lists:reverse(Acc).
 
-smtp_option_value(ConfigKey, Options) ->
-    smtp_option_value(ConfigKey, Options, undefined).
+smtp_option_value(App, EnvKey, SmtpKey, Options) ->
+    smtp_option_value(App, EnvKey, SmtpKey, Options, undefined).
 
-smtp_option_value(ConfigKey, Options, Default) ->
-    case proplists:get_value(ConfigKey, Options) of
-        undefined -> application:get_env(?APP, ConfigKey, Default);
+smtp_option_value(App, EnvKey, SmtpKey, Options, Default) ->
+    case proplists:get_value(SmtpKey, Options) of
+        undefined -> application:get_env(App, EnvKey, Default);
         Value     -> Value
     end.
 
