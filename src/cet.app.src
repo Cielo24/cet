@@ -1,6 +1,6 @@
 {application, cet,
  [{description, "Cielo24 Erlang Tools"},
-  {vsn, "0.2.2"},
+  {vsn, "0.2.3"},
   {registered, []},
   %% {mod, {jet_app, []}},
   {applications,
