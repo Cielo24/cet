@@ -20,6 +20,7 @@
 -export([reply_json_text/2]).
 -export([status_reason/1]).
 -export([verify_token/3]).
+-export([write_body/4]).
 -export([write_part_body/4]).
 
 -define(HDR_CONTENT_TYPE, "content-type").
@@ -30,9 +31,9 @@
 
 -define(MAX_BODY_LENGTH, 10485760).
 
--type req()                    :: cowboy_req:req().
--type write_part_body_option() :: {max_length, non_neg_integer()}
-                                | {compress, boolean()}.
+-type req()               :: cowboy_req:req().
+-type write_body_option() :: {max_length, non_neg_integer()}
+                           | {compress, boolean()}.
 
 
 -spec common_log(cowboy:status(), cowboy:headers(), iodata(), req()) -> req().
@@ -264,11 +265,21 @@ verify_token(HeaderName, Secret, Req0) ->
     end.
 
 
+-spec write_body(FileStem :: binary(), FileExt :: binary(), req(), [write_body_option()]) ->
+                        {ok, Filename :: binary(), req()} |
+                        {error, Reason :: term(), req()}.
+write_body(FileStem, FileExt, Req, Options) ->
+    write_body(fun (Req1) -> cowboy_req:body(Req1) end, FileStem, FileExt, Req, Options).
 
--spec write_part_body(FileStem :: binary(), FileExt :: binary(), req(), [write_part_body_option()]) ->
+
+-spec write_part_body(FileStem :: binary(), FileExt :: binary(), req(), [write_body_option()]) ->
                              {ok, Filename :: binary(), req()} |
                              {error, Reason :: term(), req()}.
-write_part_body(FileStem, FileExt, Req, Options)
+write_part_body(FileStem, FileExt, Req, Options) ->
+    write_body(fun (Req1) -> cowboy_req:part_body(Req1) end, FileStem, FileExt, Req, Options).
+
+
+write_body(ReadBody, FileStem, FileExt, Req, Options)
   when is_binary(FileStem), is_binary(FileExt), is_list(Options) ->
     case cet_file:open_temp(FileStem, FileExt, [write, exclusive, raw, binary, delayed_write]) of
         {ok, {Filename, IoDevice}} ->
@@ -279,9 +290,9 @@ write_part_body(FileStem, FileExt, Req, Options)
                 MaxLength = proplists:get_value(max_length, Options, ?MAX_BODY_LENGTH),
                 case proplists:get_value(compress, Options, false) of
                     true ->
-                        write_gzip_part_body(Filename, IoDevice, MaxLength, Req);
+                        write_gzip_body(ReadBody, Filename, IoDevice, MaxLength, Req);
                     _ ->
-                        write_raw_part_body(Filename, IoDevice, MaxLength, Req)
+                        write_raw_body(ReadBody, Filename, IoDevice, MaxLength, Req)
                 end
             after
                 file:close(IoDevice)
@@ -293,15 +304,12 @@ write_part_body(FileStem, FileExt, Req, Options)
 
 -define(MAX_WBITS, 15).
 
--spec write_gzip_part_body(file:name_all(), file:io_device(), MaxLength :: non_neg_integer(), req()) ->
-                                  {ok, file:name_all(), req()} |
-                                  {error, Reason :: term(), req()}.
-write_gzip_part_body(Filename, IoDevice, MaxLength, Req0) ->
+write_gzip_body(ReadBody, Filename, IoDevice, MaxLength, Req0) ->
     ZStream = zlib:open(),
     try
         %% Emulate the initialization made by zlib:gzip/1.
         zlib:deflateInit(ZStream, default, deflated, 16 + ?MAX_WBITS, 8, default),
-        case write_gzip_part_body_chunk(Filename, IoDevice, ZStream, 0, MaxLength, Req0) of
+        case write_gzip_body_chunk(ReadBody, Filename, IoDevice, ZStream, 0, MaxLength, Req0) of
             {ok, _Filename, _Req} = Result ->
                 zlib:deflateEnd(ZStream),
                 Result;
@@ -314,8 +322,8 @@ write_gzip_part_body(Filename, IoDevice, MaxLength, Req0) ->
         zlib:close(ZStream)
     end.
 
-write_gzip_part_body_chunk(Filename, IoDevice, ZStream, Length, MaxLength, Req0) ->
-    {Status, Chunk, Req} = cowboy_req:part_body(Req0),
+write_gzip_body_chunk(ReadBody, Filename, IoDevice, ZStream, Length, MaxLength, Req0) ->
+    {Status, Chunk, Req} = ReadBody(Req0),
     NewLength = Length + byte_size(Chunk),
     if
         NewLength =< MaxLength ->
@@ -324,7 +332,8 @@ write_gzip_part_body_chunk(Filename, IoDevice, ZStream, Length, MaxLength, Req0)
                 ok when Status =:= ok ->
                     {ok, Filename, Req};
                 ok when Status =:= more ->
-                    write_gzip_part_body_chunk(Filename, IoDevice, ZStream, NewLength, MaxLength, Req);
+                    write_gzip_body_chunk(ReadBody, Filename, IoDevice, ZStream,
+                                          NewLength, MaxLength, Req);
                 {error, enospc} ->
                     lager:error("Not enough space on filesystem to write to file '~s'~n", [Filename]),
                     {error, enospc, Req};
@@ -342,14 +351,11 @@ deflate_flush(more) -> none;
 deflate_flush(ok)   -> finish.
 
 
--spec write_raw_part_body(file:name_all(), file:io_device(), MaxLength :: non_neg_integer(), req()) ->
-                                 {ok, file:name_all(), req()} |
-                                 {error, Reason :: term(), req()}.
-write_raw_part_body(Filename, IoDevice, MaxLength, Req0) ->
+write_raw_body(ReadBody, Filename, IoDevice, MaxLength, Req0) ->
     %% Warning: this function will not be tail-recursive (given
     %% that it is inside a try block) and might blow up the stack
     %% if the file being transferred is too big.
-    case write_raw_part_body_chunk(Filename, IoDevice, 0, MaxLength, Req0) of
+    case write_raw_body_chunk(ReadBody, Filename, IoDevice, 0, MaxLength, Req0) of
         {ok, _Filename, _Req} = Result ->
             Result;
         {error, _Reason, _Req} = Error ->
@@ -358,8 +364,8 @@ write_raw_part_body(Filename, IoDevice, MaxLength, Req0) ->
             Error
     end.
 
-write_raw_part_body_chunk(Filename, IoDevice, Length, MaxLength, Req0) ->
-    {Status, Chunk, Req} = cowboy_req:part_body(Req0),
+write_raw_body_chunk(ReadBody, Filename, IoDevice, Length, MaxLength, Req0) ->
+    {Status, Chunk, Req} = ReadBody(Req0),
     NewLength = Length + byte_size(Chunk),
     if
         NewLength =< MaxLength ->
@@ -367,7 +373,7 @@ write_raw_part_body_chunk(Filename, IoDevice, Length, MaxLength, Req0) ->
                 ok when Status =:= ok ->
                     {ok, Filename, Req};
                 ok when Status =:= more ->
-                    write_raw_part_body_chunk(Filename, IoDevice, NewLength, MaxLength, Req);
+                    write_raw_body_chunk(ReadBody, Filename, IoDevice, NewLength, MaxLength, Req);
                 {error, enospc} ->
                     lager:error("Not enough space on filesystem to write to file '~s'~n", [Filename]),
                     {error, enospc, Req};
