@@ -1,9 +1,12 @@
-[{<<"bbmustache">>,{pkg,<<"bbmustache">>,<<"1.0.4">>},0},
+[{<<"bbmustache">>,{pkg,<<"bbmustache">>,<<"1.1.0">>},0},
  {<<"bstr">>,{pkg,<<"bstr">>,<<"0.3.0">>},0},
  {<<"cowboy">>,{pkg,<<"cowboy">>,<<"1.0.4">>},0},
  {<<"cowlib">>,{pkg,<<"cowlib">>,<<"1.0.2">>},1},
- {<<"gen_smtp">>,{pkg,<<"gen_smtp">>,<<"0.9.0">>},0},
- {<<"goldrush">>,{pkg,<<"goldrush">>,<<"0.1.7">>},1},
+ {<<"gen_smtp">>,
+  {git,"https://github.com/Vagabond/gen_smtp.git",
+       {ref,"f7476f3dce94cdb51ef8ca32fdbf503130badefc"}},
+  0},
+ {<<"goldrush">>,{pkg,<<"goldrush">>,<<"0.1.8">>},1},
  {<<"jsx">>,{pkg,<<"jsx">>,<<"2.8.0">>},0},
- {<<"lager">>,{pkg,<<"lager">>,<<"3.0.1">>},0},
- {<<"ranch">>,{pkg,<<"ranch">>,<<"1.2.0">>},1}].
+ {<<"lager">>,{pkg,<<"lager">>,<<"3.2.1">>},0},
+ {<<"ranch">>,{pkg,<<"ranch">>,<<"1.2.1">>},1}].
