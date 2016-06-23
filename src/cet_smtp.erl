@@ -263,7 +263,7 @@ attachment_part(Attachment) ->
                                         {<<?TYPE_APPLICATION>>, <<?SUBTYPE_OCTET_STREAM>>}),
     Name = attachment_name(Attachment),
     %% Create a unique ID for the attachment.
-    AttachmentId = integer_to_binary(erlang:crc32([Name, rand_bytes(2)]), 16),
+    AttachmentId = integer_to_binary(erlang:crc32([Name, crypto:strong_rand_bytes(2)]), 16),
     Headers = [{<<?HDR_CONTENT_TRANSFER_ENCODING>>, <<"base64">>},
                {<<?HDR_X_ATTACHMENT_ID>>, AttachmentId}],
     Parameters = [{<<"content-type-params">>, content_type_params(Attachment)},
@@ -285,7 +285,7 @@ attachment_name(Attachment) ->
         Bin when is_binary(Bin) ->
             Bin;
         undefined ->
-            RandomId = bstr:hexencode(rand_bytes(4)),
+            RandomId = bstr:hexencode(crypto:strong_rand_bytes(4)),
             <<"att", RandomId/binary>>
     end.
 
@@ -435,13 +435,3 @@ email_ok(_Result) ->
 email_error(Result) ->
     lager:warning("Email send failed: ~p", [Result]),
     {error, {email_send_failed, Result}}.
-
-
-rand_bytes(Length) ->
-    try crypto:strong_rand_bytes(Length) of
-        Bytes ->
-            Bytes
-    catch
-        _:low_entropy ->
-            crypto:rand_bytes(Length)
-    end.

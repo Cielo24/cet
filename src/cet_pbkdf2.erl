@@ -158,19 +158,7 @@ secure_compare(_Bin1, _Bin2, Acc) ->
 
 -spec make_salt(Length :: non_neg_integer()) -> Salt :: binary().
 make_salt(Length) ->
-    base64:encode(rand_bytes(Length)).
-
-
--spec rand_bytes(Length :: non_neg_integer()) -> binary().
-rand_bytes(Length) when is_integer(Length), Length > 0 ->
-    try crypto:strong_rand_bytes(Length) of
-        Bytes ->
-            Bytes
-    catch
-        _:low_entropy ->
-            crypto:rand_bytes(Length)
-    end.
-
+    base64:encode(crypto:strong_rand_bytes(Length)).
 
 
 -ifdef(TEST).
@@ -201,7 +189,7 @@ rand_bytes(Length) when is_integer(Length), Length > 0 ->
 
 pbkdf2_hex(Args) ->
 	io:format("Running test with Args = ~p~n", [Args]),
-	Key = apply(mdps_pbkdf2, hash, Args),
+	Key = apply(cet_pbkdf2, hash, Args),
 	bstr:hexencode(Key).
 
 

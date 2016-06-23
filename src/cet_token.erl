@@ -11,7 +11,6 @@
 -export([hash_secret/3]).
 -export([decode/1]).
 -export([verify/2, verify/4]).
--export([rand_bytes/1]).
 
 -define(VERSION, "1").
 -define(SALT_LENGTH, 20).
@@ -22,7 +21,7 @@
 %%      <code>Version:Salt:Expiration:HashedSecret</code>
 -spec encode(Secret :: binary(), Lifetime :: non_neg_integer()) -> Token :: binary().
 encode(Secret, Lifetime) ->
-    encode(Secret, rand_bytes(?SALT_LENGTH), Lifetime).
+    encode(Secret, crypto:strong_rand_bytes(?SALT_LENGTH), Lifetime).
 
 -spec encode(Secret :: binary(), Salt :: binary(), Lifetime :: non_neg_integer()) -> Token :: binary().
 encode(Secret, Salt, Lifetime) ->
@@ -90,15 +89,4 @@ verify(Secret, Salt, Expiration, HashedSecret) ->
             end;
         true ->
             {error, expired_token}
-    end.
-
-
--spec rand_bytes(Length :: non_neg_integer()) -> binary().
-rand_bytes(Length) when is_integer(Length), Length > 0 ->
-    try crypto:strong_rand_bytes(Length) of
-        Bytes ->
-            Bytes
-    catch
-        _:low_entropy ->
-            crypto:rand_bytes(Length)
     end.
